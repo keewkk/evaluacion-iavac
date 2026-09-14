@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Panel de Administración - Salidas Pedagógicas UNAB</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="icon" href="img/unab-logo.png" type="image/png">
+  <style>
+    /* ═══ Estilos específicos del Admin ═══ */
+    .admin-header {
+      background: linear-gradient(135deg, #1a1a2e 0%, var(--unab-azul) 50%, var(--unab-azul-oscuro) 100%);
+      color: white;
+      padding: 2rem;
+      text-align: center;
+    }
+    .admin-header h1 { font-size: 1.8rem; margin-bottom: 0.3rem; }
+    .admin-header p { opacity: 0.7; }
+
+    /* Stats grid */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .stat-card {
+      background: white;
+      border-radius: 12px;
+      padding: 1.5rem;
+      text-align: center;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+      border-top: 4px solid var(--unab-azul);
+    }
+    .stat-card.gold { border-top-color: var(--unab-dorado); }
+    .stat-card.green { border-top-color: var(--exito); }
+    .stat-card.red { border-top-color: var(--error); }
+    .stat-card .stat-icon { font-size: 1.8rem; margin-bottom: 0.5rem; }
+    .stat-card .stat-valor {
+      font-size: 1.8rem;
+      font-weight: 800;
+      color: var(--unab-azul);
+    }
+    .stat-card .stat-label {
+      font-size: 0.8rem;
+      color: var(--texto-suave);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 0.3rem;
+    }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; margin-bottom: 0; }
+    .tab-btn {
+      flex: 1;
+      padding: 1rem;
+      background: white;
+      border: none;
+      border-bottom: 3px solid transparent;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--texto-suave);
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .tab-btn:hover { color: var(--unab-azul); background: #f0f4f8; }
+    .tab-btn.active {
+      color: var(--unab-azul);
+      border-bottom-color: var(--unab-dorado);
+      background: white;
+    }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* Tablas */
+    .tabla-container {
+      background: white;
+      border-radius: 0 0 12px 12px;
+      overflow-x: auto;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    }
+    .tabla-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--gris-borde);
+    }
+    .tabla-header h3 { color: var(--unab-azul); font-size: 1.1rem; }
+    .tabla-header span { color: var(--texto-suave); font-size: 0.85rem; }
+
+    table { width: 100%; border-collapse: collapse; }
+    thead th {
+      background: var(--gris-claro);
+      padding: 0.8rem 1rem;
+      text-align: left;
+      font-size: 0.8rem;
+      color: var(--texto-suave);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border-bottom: 2px solid var(--gris-borde);
+    }
+    tbody td {
+      padding: 0.8rem 1rem;
+      border-bottom: 1px solid var(--gris-borde);
+      font-size: 0.9rem;
+    }
+    tbody tr:hover { background: #f8f9ff; }
+    .fila-cancelada { opacity: 0.5; }
+    .fila-cancelada td { text-decoration: line-through; }
+    .fila-cancelada .estado-badge { text-decoration: none; }
+
+    /* Barra de cupos */
+    .barra-cupos {
+      width: 100%;
+      height: 8px;
+      background: var(--gris-borde);
+      border-radius: 4px;
+      overflow: hidden;
+      margin-bottom: 0.3rem;
+    }
+    .barra-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.5s ease;
+    }
+
+    /* Botón exportar */
+    .btn-export {
+      padding: 0.5rem 1.2rem;
+      background: var(--exito);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .btn-export:hover { background: #00a884; transform: translateY(-1px); }
+
+    @media (max-width: 768px) {
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .tabs { flex-wrap: wrap; }
+      .tab-btn { flex: none; width: 50%; }
+      table { font-size: 0.8rem; }
+      thead th, tbody td { padding: 0.5rem; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ═══ NAVBAR ═══ -->
+  <nav class="navbar">
+    <a href="/" class="nav-brand">
+      <img src="img/unab-logo.png" alt="Universidad Andrés Bello" class="nav-logo">
+      <span class="nav-title">Salidas<span>UNAB</span></span>
+    </a>
+    <button class="nav-toggle" aria-label="Menú">
+      <span></span><span></span><span></span>
+    </button>
+    <ul class="nav-links">
+      <li><a href="/">Inicio</a></li>
+      <li><a href="destinos.html">Salidas</a></li>
+      <li><a href="mis-reservas.html">Mis Inscripciones</a></li>
+      <li><a href="admin.html" style="color:var(--unab-dorado)">⚙️ Admin</a></li>
+    </ul>
+  </nav>
+
+  <!-- ═══ ADMIN HEADER ═══ -->
+  <section class="admin-header">
+    <h1>⚙️ Panel de Administración</h1>
+    <p>Gestión de inscripciones y salidas pedagógicas — UNAB</p>
+  </section>
+
+  <!-- ═══ CONTENIDO ═══ -->
+  <div class="container">
+
+    <!-- Dashboard Stats -->
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-icon">🌿</div>
+        <div class="stat-valor" id="stat-destinos">—</div>
+        <div class="stat-label">Salidas</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">📋</div>
+        <div class="stat-valor" id="stat-reservas">—</div>
+        <div class="stat-label">Total Inscripciones</div>
+      </div>
+      <div class="stat-card green">
+        <div class="stat-icon">✅</div>
+        <div class="stat-valor" id="stat-confirmadas">—</div>
+        <div class="stat-label">Confirmadas</div>
+      </div>
+      <div class="stat-card red">
+        <div class="stat-icon">❌</div>
+        <div class="stat-valor" id="stat-canceladas">—</div>
+        <div class="stat-label">Canceladas</div>
+      </div>
+      <div class="stat-card gold">
+        <div class="stat-icon">💰</div>
+        <div class="stat-valor" id="stat-ingresos" style="font-size:1.3rem;">—</div>
+        <div class="stat-label">Costo Total</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-icon">👥</div>
+        <div class="stat-valor" id="stat-pasajeros">—</div>
+        <div class="stat-label">Estudiantes</div>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="panel-reservas">📋 Inscripciones de Estudiantes</button>
+      <button class="tab-btn" data-tab="panel-destinos">🌿 Salidas & Cupos</button>
+    </div>
+
+    <!-- Tab: Inscripciones -->
+    <div id="panel-reservas" class="tab-panel active">
+      <div class="tabla-container">
+        <div class="tabla-header">
+          <div>
+            <h3>Todas las Inscripciones</h3>
+            <span id="total-reservas-tabla"></span>
+          </div>
+          <button class="btn-export" onclick="exportarCSV()">📥 Exportar CSV</button>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Estudiante</th>
+              <th>Email</th>
+              <th>Teléfono</th>
+              <th>Salida</th>
+              <th>Asientos Van</th>
+              <th>Personas</th>
+              <th>Estado</th>
+              <th>Fecha Inscripción</th>
+            </tr>
+          </thead>
+          <tbody id="tabla-reservas">
+            <tr><td colspan="9" style="text-align:center;padding:2rem;">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tab: Salidas -->
+    <div id="panel-destinos" class="tab-panel">
+      <div class="tabla-container">
+        <div class="tabla-header">
+          <h3>Salidas — Ocupación y Cupos</h3>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Salida</th>
+              <th>Costo</th>
+              <th>Duración</th>
+              <th>Inscripciones</th>
+              <th>Ocupación</th>
+              <th>Fecha Inicio</th>
+            </tr>
+          </thead>
+          <tbody id="tabla-destinos">
+            <tr><td colspan="7" style="text-align:center;padding:2rem;">Cargando...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer class="footer">
+    <div class="footer-content">
+      <div class="footer-brand">
+        <img src="img/unab-logo.png" alt="UNAB" class="footer-logo">
+        <p>Sistema de Salidas Pedagógicas<br>Universidad Andrés Bello</p>
+      </div>
+      <div class="footer-links">
+        <h4>Navegación</h4>
+        <ul>
+          <li><a href="/">Inicio</a></li>
+          <li><a href="destinos.html">Salidas</a></li>
+          <li><a href="mis-reservas.html">Mis Inscripciones</a></li>
+          <li><a href="admin.html">Panel Admin</a></li>
+        </ul>
+      </div>
+      <div class="footer-contact">
+        <p>📧 salidas.pedagogicas@unab.cl</p>
+        <p>📞 +56 2 2661 8000</p>
+        <p>📍 Quillota 980, Viña del Mar</p>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>© 2026 SalidasUNAB — Universidad Andrés Bello. Todos los derechos reservados.</p>
+    </div>
+  </footer>
+
+  <script src="js/app.js"></script>
+  <script src="js/admin.js"></script>
+
+</body>
+</html>

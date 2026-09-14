@@ -1,0 +1,15 @@
+services:
+  reservas-unab:
+    build: .
+    container_name: reservas-unab
+    ports:
+      - "8080:3000"
+    volumes:
+      - db-data:/app/database
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+
+volumes:
+  db-data:

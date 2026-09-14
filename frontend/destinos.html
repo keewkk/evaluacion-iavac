@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Salidas Pedagógicas - UNAB</title>
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="icon" href="img/unab-logo.png" type="image/png">
+</head>
+<body>
+
+  <!-- ═══ NAVBAR ═══ -->
+  <nav class="navbar">
+    <a href="/" class="nav-brand">
+      <img src="img/unab-logo.png" alt="Universidad Andrés Bello" class="nav-logo">
+      <span class="nav-title">Salidas<span>UNAB</span></span>
+    </a>
+    <button class="nav-toggle" aria-label="Menú">
+      <span></span><span></span><span></span>
+    </button>
+    <ul class="nav-links">
+      <li><a href="/">Inicio</a></li>
+      <li><a href="destinos.html">Salidas</a></li>
+      <li><a href="mis-reservas.html">Mis Inscripciones</a></li>
+    </ul>
+  </nav>
+
+  <!-- ═══ PAGE HEADER ═══ -->
+  <section class="page-header">
+    <h1>🌿 Salidas Pedagógicas en Terreno</h1>
+    <p>Encuentra tu próxima experiencia de aprendizaje en terreno</p>
+  </section>
+
+  <!-- ═══ CONTENIDO ═══ -->
+  <div class="container">
+    <!-- Filtros -->
+    <div class="filtros-bar">
+      <input type="text" id="filtro-buscar" placeholder="🔍 Buscar salidas...">
+      <select id="filtro-pais">
+        <option value="">Todas las regiones</option>
+      </select>
+      <select id="filtro-orden">
+        <option value="">Ordenar por</option>
+        <option value="precio-asc">Costo: menor a mayor</option>
+        <option value="precio-desc">Costo: mayor a menor</option>
+        <option value="duracion">Duración</option>
+        <option value="fecha">Fecha más próxima</option>
+      </select>
+    </div>
+
+    <!-- Grid de salidas -->
+    <div class="destinos-grid" id="destinos-grid">
+      <div class="loading"><div class="spinner"></div></div>
+    </div>
+  </div>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer class="footer">
+    <div class="footer-content">
+      <div class="footer-brand">
+        <img src="img/unab-logo.png" alt="UNAB" class="footer-logo">
+        <p>Sistema de Salidas Pedagógicas<br>Universidad Andrés Bello</p>
+      </div>
+      <div class="footer-links">
+        <h4>Navegación</h4>
+        <ul>
+          <li><a href="/">Inicio</a></li>
+          <li><a href="destinos.html">Salidas</a></li>
+          <li><a href="mis-reservas.html">Mis Inscripciones</a></li>
+          <li><a href="#">Contacto</a></li>
+        </ul>
+      </div>
+      <div class="footer-contact">
+        <p>📧 salidas.pedagogicas@unab.cl</p>
+        <p>📞 +56 2 2661 8000</p>
+        <p>📍 Quillota 980, Viña del Mar</p>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>© 2026 SalidasUNAB — Universidad Andrés Bello. Todos los derechos reservados.</p>
+    </div>
+  </footer>
+
+  <script src="js/app.js"></script>
+  <script src="js/destinos.js"></script>
+  <script>
+    // Si viene búsqueda desde hero
+    document.addEventListener('DOMContentLoaded', () => {
+      const params = new URLSearchParams(window.location.search);
+      const q = params.get('q');
+      if (q) {
+        document.getElementById('filtro-buscar').value = q;
+      }
+    });
+  </script>
+
+</body>
+</html>
