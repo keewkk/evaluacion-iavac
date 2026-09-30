@@ -1,0 +1,59 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: vac_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: vac_db
+      MYSQL_USER: vac_user
+      MYSQL_PASSWORD: vac_password
+    ports:
+      - "3308:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-prootpassword"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: vac_backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: mysql+pymysql://vac_user:vac_password@db:3306/vac_db
+      # Integracion IA (modulo M2 - preevaluacion con Qwen/Gemma).
+      # Se dejan vacias hasta que la universidad entregue las credenciales;
+      # mientras tanto el backend responde 503 de forma controlada en vez de
+      # fallar (ver backend/app/ia_service.py). Para probarlo localmente con
+      # un endpoint compatible con OpenAI (Ollama, vLLM, etc.) basta con
+      # completar estas 4 variables, no hace falta tocar codigo.
+      IA_API_URL: ${IA_API_URL:-}
+      IA_API_KEY: ${IA_API_KEY:-}
+      IA_MODEL_QWEN: ${IA_MODEL_QWEN:-qwen2.5-72b-instruct}
+      IA_MODEL_GEMMA: ${IA_MODEL_GEMMA:-gemma-2-27b-it}
+    ports:
+      - "8002:8000"
+    volumes:
+      - ./uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        REACT_APP_API_URL: http://localhost:8002
+    container_name: vac_frontend
+    restart: unless-stopped
+    ports:
+      - "3002:80"
+    depends_on:
+      - backend
+
+volumes:
+  db_data:

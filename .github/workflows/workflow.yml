@@ -1,0 +1,73 @@
+name: CI - Evaluacion IA VAC (R1)
+
+on:
+  push:
+    branches: [main, desa, develop]
+  pull_request:
+    branches: [main, desa, develop]
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: '1. Backend (FastAPI)'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Instalar dependencias
+        working-directory: backend
+        run: pip install -r requirements.txt
+      - name: Verificar que el codigo importa sin errores
+        working-directory: backend
+        run: python -c "from app import models, schemas, main"
+
+  frontend:
+    name: '2. Frontend (React)'
+    runs-on: ubuntu-latest
+    needs: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Instalar dependencias
+        working-directory: frontend
+        run: npm install
+      - name: Compilar build de produccion
+        working-directory: frontend
+        run: npm run build
+
+  docker-build:
+    name: '3. Build de imagenes Docker'
+    runs-on: ubuntu-latest
+    needs: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Construir imagenes con Docker Compose
+        run: docker compose build
+
+  integration:
+    name: '4. Prueba de integracion (stack completo)'
+    runs-on: ubuntu-latest
+    needs: docker-build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Levantar el stack
+        run: docker compose up -d
+      - name: Esperar a que el backend responda
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8002/api/health; then
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "El backend no respondio a tiempo"
+          exit 1
+      - name: Verificar que el frontend responde
+        run: curl -sf http://localhost:3002/
+      - name: Apagar el stack
+        if: always()
+        run: docker compose down -v
