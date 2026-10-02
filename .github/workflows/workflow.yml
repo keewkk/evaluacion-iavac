@@ -19,9 +19,13 @@ jobs:
       - name: Instalar dependencias
         working-directory: backend
         run: pip install -r requirements.txt
-      - name: Verificar que el codigo importa sin errores
+      # main.py se conecta a MySQL al importarse, y aqui no hay base de datos
+      # (eso lo cubre el job de integracion). Por eso solo se compila.
+      - name: Verificar que el codigo compila e importa sin errores
         working-directory: backend
-        run: python -c "from app import models, schemas, main"
+        run: |
+          python -m compileall -q app
+          python -c "from app import models, schemas, ia_service"
 
   frontend:
     name: '2. Frontend (React)'
