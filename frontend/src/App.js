@@ -17,6 +17,7 @@ import {
 
 const PREVIEW_EXT = ["pdf", "png", "jpg", "jpeg", "gif", "webp", "svg", "txt"];
 const IMAGE_EXT = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
+const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024;
 const extension = (ruta) => (ruta.split(".").pop() || "").toLowerCase();
 const formatFecha = (iso) => {
   if (!iso) return "-";
@@ -698,6 +699,12 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
 
   const elegirArchivo = (f) => {
     if (!f) return;
+    if (f.size > MAX_UPLOAD_SIZE_BYTES) {
+      setFile(null);
+      setError("El archivo supera el límite permitido de 50 MB.");
+      return;
+    }
+    setError("");
     setFile(f);
     if (!nombre.trim()) setNombre(f.name.replace(/\.[^.]+$/, ""));
   };
@@ -721,7 +728,12 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
       setInstrumentoId("");
       refresh();
     } catch (err) {
-      setError("No se pudo cargar el documento.");
+      setError(
+        err.response?.status === 413
+          ? err.response?.data?.detail ||
+              "El archivo supera el límite permitido de 50 MB."
+          : "No se pudo cargar el documento."
+      );
     }
   };
 
@@ -759,16 +771,29 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
               elegirArchivo(e.dataTransfer.files[0]);
             }}
           >
-            <Icon name="upload" size={28} />
-            <span>
-              {file ? file.name : "Arrastra un archivo aqui o haz clic para elegirlo"}
+            <span className="dropzone-icon">
+              <Icon name="upload" size={24} />
+            </span>
+            <strong className="dropzone-title">
+              {file ? file.name : "Arrastra tu documento aqui"}
+            </strong>
+            <span className="dropzone-hint">
+              {file
+                ? `${(file.size / (1024 * 1024)).toFixed(1)} MB · Haz clic para cambiarlo`
+                : "o haz clic para buscarlo en tu dispositivo"}
+            </span>
+            <span className="dropzone-limit">Hasta 50 MB por archivo</span>
+            <span className="dropzone-note">
+              La IA analiza hasta 12.000 caracteres del documento.
             </span>
             <input
               type="file"
-              onChange={(e) => elegirArchivo(e.target.files[0])}
+              onChange={(e) => {
+                elegirArchivo(e.target.files[0]);
+                e.target.value = "";
+              }}
             />
           </label>
-
           <div className="form-row">
             <label>Nombre del documento</label>
             <input value={nombre} onChange={(e) => setNombre(e.target.value)} />

@@ -88,6 +88,13 @@ de IA. `docs/sprints/sprint-01.md` tiene el objetivo y alcance del sprint.
 | GET | `/api/documentos/{id}/preevaluaciones` | Historial de preevaluaciones del documento |
 | GET | `/api/logs` | Log de auditoria (filtro opcional `?entidad=`) |
 
+Cada archivo cargado puede pesar hasta **50 MB**. La interfaz y la API validan
+el límite y la API responde con HTTP 413 si se supera. Este límite corresponde
+al almacenamiento del archivo, no a la capacidad del modelo: antes de llamar a
+la IA, el backend extrae texto de PDF, DOCX, TXT y MD y actualmente limita el
+contenido enviado a **12.000 caracteres**. El proveedor/modelo configurado puede
+tener además su propio límite de contexto.
+
 Swagger interactivo disponible en `http://localhost:8002/docs`.
 
 ## Integracion IA (Qwen / Gemma)

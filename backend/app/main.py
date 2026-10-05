@@ -14,6 +14,7 @@ wait_for_db()
 Base.metadata.create_all(bind=engine)
 
 UPLOAD_DIR = "/app/uploads"
+MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024
 
 # La imagen slim de Python no conoce estos tipos y los serviria como text/plain.
 OFFICE_TYPES = {
@@ -162,6 +163,15 @@ def upload_documento(
     ext = os.path.splitext(file.filename or "")[1]
     stored_name = f"{uuid.uuid4().hex}{ext}"
     dest_path = os.path.join(UPLOAD_DIR, stored_name)
+
+    file.file.seek(0, os.SEEK_END)
+    file_size = file.file.tell()
+    file.file.seek(0)
+    if file_size > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail="El archivo supera el límite permitido de 50 MB.",
+        )
 
     with open(dest_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
