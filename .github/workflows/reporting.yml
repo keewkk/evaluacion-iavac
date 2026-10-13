@@ -1,0 +1,72 @@
+name: DevHub Evidence Collector
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR opcional: vacío genera el historial acumulado de la rama elegida'
+        required: false
+        type: string
+      report_branch:
+        description: Rama para el reporte manual sin PR
+        required: true
+        default: desa
+        type: choice
+        options:
+          - desa
+          - main
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: read
+  checks: read
+
+jobs:
+  collect-event-data:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.action == 'closed' &&
+       github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.ref == 'desa' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout trusted collector
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            /scripts/
+            /.github/workflows/ci.yml
+            /.github/workflows/reporting.yml
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify collector
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Build evidence snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PR: ${{ inputs.pr_number }}
+          REPORT_BRANCH: ${{ inputs.report_branch }}
+        run: |
+          args=()
+          if [ -n "$INPUT_PR" ]; then
+            args+=(--pr "$INPUT_PR")
+          elif [ "$GITHUB_EVENT_NAME" = 'workflow_dispatch' ]; then
+            args+=(--branch "${REPORT_BRANCH:-desa}")
+          fi
+          python scripts/evidence_report.py "${args[@]}"
+      - name: Upload evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: devhub-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: reports/evidence/
+          retention-days: 90
+          if-no-files-found: error

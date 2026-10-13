@@ -33,3 +33,7 @@ reports/
 Los reportes constituyen evidencia objetiva para la evaluación.
 
 No reemplazan el juicio académico del docente.
+
+## Reporte de evidencia DevHub
+
+Consultar la [guía de evidencia](evidence-guide.md). Actions → DevHub Evidence Collector → Run workflow permite extraer el historial de desa sin indicar PR, o recapturar una entrega por número de PR. Summary y artefacto Markdown/JSON; muestra descriptiva de commits y líneas, sin estimar horas.
