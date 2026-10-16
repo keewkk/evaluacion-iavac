@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -119,7 +120,7 @@ class PreevaluacionOut(BaseModel):
 
 
 class PreevaluarRequest(BaseModel):
-    modelo: str = "qwen"  # "qwen" | "gemma"
+    modelo: Literal["qwen", "gemma"] = "qwen"
 
 
 # ---- Log de auditoria (M3 - trazabilidad) ----

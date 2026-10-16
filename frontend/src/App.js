@@ -12,13 +12,34 @@ import {
   archivoUrl,
   preevaluarDocumento,
   getPreevaluaciones,
+  getUltimasPreevaluaciones,
   getLogs,
+  getIAEstado,
+  probarIA,
+  getPromptPreview,
 } from "./api";
 
 const PREVIEW_EXT = ["pdf", "png", "jpg", "jpeg", "gif", "webp", "svg", "txt"];
 const IMAGE_EXT = ["png", "jpg", "jpeg", "gif", "webp", "svg"];
 const MAX_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024;
 const extension = (ruta) => (ruta.split(".").pop() || "").toLowerCase();
+const formatPuntaje = (valor) =>
+  new Intl.NumberFormat("es-CL", { maximumFractionDigits: 1 }).format(valor);
+const puntajeMaximo = (criterios = []) =>
+  criterios.reduce((total, criterio) => total + criterio.puntaje_max, 0);
+const obtenerOpcionesModelo = (modelos) => {
+  const unicos = new Map();
+  Object.entries(modelos || {}).forEach(([alias, nombre]) => {
+    if (nombre && !unicos.has(nombre)) unicos.set(nombre, alias);
+  });
+  if (unicos.size === 0) {
+    return [
+      { value: "qwen", label: "Qwen" },
+      { value: "gemma", label: "Gemma" },
+    ];
+  }
+  return Array.from(unicos, ([label, value]) => ({ label, value }));
+};
 const formatFecha = (iso) => {
   if (!iso) return "-";
   try {
@@ -204,18 +225,33 @@ function PreviewModal({ doc, onClose }) {
   );
 }
 
-function PreevaluarModal({ doc, instrumento, onClose }) {
+function PreevaluarModal({ doc, instrumento, onClose, onEvaluated }) {
   const [modelo, setModelo] = useState("qwen");
   const [loading, setLoading] = useState(false);
   const [historial, setHistorial] = useState([]);
   const [cargandoHistorial, setCargandoHistorial] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
+  const [opcionesModelo, setOpcionesModelo] = useState([
+    { value: "qwen", label: "Qwen" },
+    { value: "gemma", label: "Gemma" },
+  ]);
 
   useEffect(() => {
     getPreevaluaciones(doc.id)
       .then(setHistorial)
-      .catch(() => {})
+      .catch(() =>
+        setErrorMsg("No se pudo cargar el historial de preevaluaciones.")
+      )
       .finally(() => setCargandoHistorial(false));
+    getIAEstado()
+      .then((data) => {
+        const opciones = obtenerOpcionesModelo(data.modelos);
+        setOpcionesModelo(opciones);
+        setModelo(opciones[0].value);
+      })
+      .catch(() =>
+        setErrorMsg("No se pudo consultar el modelo configurado en el backend.")
+      );
   }, [doc.id]);
 
   const ejecutar = async () => {
@@ -224,18 +260,21 @@ function PreevaluarModal({ doc, instrumento, onClose }) {
     try {
       const res = await preevaluarDocumento(doc.id, modelo);
       setHistorial((prev) => [res, ...prev]);
+      onEvaluated();
     } catch (err) {
       const status = err.response?.status;
       const detalle = err.response?.data?.detail;
       if (status === 503) {
         setErrorMsg(
           detalle ||
-            "La integracion con el modelo de IA todavia no esta configurada (pendiente de las API keys de la universidad)."
+            "La integracion con el modelo de IA no esta configurada en el backend."
         );
       } else if (status === 422) {
         setErrorMsg(detalle || "No se pudo extraer el contenido del documento.");
+      } else if (status === 502 || status === 504) {
+        setErrorMsg(detalle || "El proveedor de IA no pudo completar la evaluacion.");
       } else {
-        setErrorMsg("No se pudo generar la preevaluacion.");
+        setErrorMsg(detalle || "No se pudo generar la preevaluacion.");
       }
     } finally {
       setLoading(false);
@@ -246,7 +285,7 @@ function PreevaluarModal({ doc, instrumento, onClose }) {
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-head">
-          <strong>Preevaluar con IA - {doc.nombre}</strong>
+          <strong>Informe y preevaluacion IA - {doc.nombre}</strong>
           <div className="modal-actions">
             <button className="icon-btn" onClick={onClose} title="Cerrar">
               <Icon name="close" size={16} />
@@ -258,28 +297,16 @@ function PreevaluarModal({ doc, instrumento, onClose }) {
             <span className="muted">
               Instrumento: {instrumento?.nombre || `#${doc.instrumento_id}`}
             </span>
-            <div className="modelo-picker">
-              <label>
-                <input
-                  type="radio"
-                  name="modelo"
-                  value="qwen"
-                  checked={modelo === "qwen"}
-                  onChange={() => setModelo("qwen")}
-                />
-                Qwen
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="modelo"
-                  value="gemma"
-                  checked={modelo === "gemma"}
-                  onChange={() => setModelo("gemma")}
-                />
-                Gemma
-              </label>
-            </div>
+            <label className="modelo-select">
+              Modelo
+              <select value={modelo} onChange={(e) => setModelo(e.target.value)}>
+                {opcionesModelo.map((opcion) => (
+                  <option key={opcion.value} value={opcion.value}>
+                    {opcion.label}
+                  </option>
+                ))}
+              </select>
+            </label>
             <button className="btn primary" onClick={ejecutar} disabled={loading}>
               <Icon name="spark" size={16} />
               {loading ? "Generando..." : "Generar preevaluacion"}
@@ -306,7 +333,8 @@ function PreevaluarModal({ doc, instrumento, onClose }) {
                   <span className="muted">{formatFecha(p.creado_en)}</span>
                   {p.resultado?.puntaje_total != null && (
                     <span className="puntaje-total">
-                      {p.resultado.puntaje_total} pts
+                      {formatPuntaje(p.resultado.puntaje_total)} /{" "}
+                      {formatPuntaje(puntajeMaximo(p.resultado.criterios))} pts
                     </span>
                   )}
                 </div>
@@ -317,14 +345,19 @@ function PreevaluarModal({ doc, instrumento, onClose }) {
                   <p className="muted">{p.resultado.resumen}</p>
                 )}
                 {p.resultado?.criterios?.length > 0 && (
-                  <ul className="criterios-view">
+                  <ul className="report-criteria">
                     {p.resultado.criterios.map((c) => (
-                      <li key={c.criterio_id}>
-                        {c.descripcion}:{" "}
-                        <em>
-                          {c.puntaje}/{c.puntaje_max}
-                        </em>
-                        {c.justificacion && ` - ${c.justificacion}`}
+                      <li className="report-criterion" key={c.criterio_id}>
+                        <div className="report-criterion-head">
+                          <strong>{c.descripcion}</strong>
+                          <em>
+                            {formatPuntaje(c.puntaje)}/
+                            {formatPuntaje(c.puntaje_max)} pts
+                          </em>
+                        </div>
+                        {c.justificacion && (
+                          <p className="muted">{c.justificacion}</p>
+                        )}
                       </li>
                     ))}
                   </ul>
@@ -696,6 +729,38 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
   const [preview, setPreview] = useState(null);
   const [preevaluando, setPreevaluando] = useState(null);
   const [error, setError] = useState("");
+  const [evaluaciones, setEvaluaciones] = useState({});
+  const [errorEvaluaciones, setErrorEvaluaciones] = useState("");
+
+  useEffect(() => {
+    if (documentos.length === 0) {
+      setEvaluaciones({});
+      setErrorEvaluaciones("");
+      return undefined;
+    }
+    let activo = true;
+    getUltimasPreevaluaciones()
+      .then((resultados) => {
+        if (!activo) return;
+        setEvaluaciones(
+          resultados.reduce((porDocumento, resultado) => {
+            porDocumento[resultado.documento_id] = resultado;
+            return porDocumento;
+          }, {})
+        );
+        setErrorEvaluaciones("");
+      })
+      .catch(() => {
+        if (activo) {
+          setErrorEvaluaciones(
+            "No se pudieron cargar las puntuaciones e informes guardados."
+          );
+        }
+      });
+    return () => {
+      activo = false;
+    };
+  }, [documentos]);
 
   const elegirArchivo = (f) => {
     if (!f) return;
@@ -821,6 +886,9 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
 
       <section className="panel">
         <h2>Documentos cargados ({visibles.length})</h2>
+        {errorEvaluaciones && (
+          <p className="error banner" role="alert">{errorEvaluaciones}</p>
+        )}
         {visibles.length === 0 && (
           <p className="empty">
             {documentos.length === 0
@@ -836,6 +904,7 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
                   <th>Nombre</th>
                   <th>Estado</th>
                   <th>Instrumento asociado</th>
+                  <th>Resultado IA</th>
                   <th></th>
                 </tr>
               </thead>
@@ -862,6 +931,39 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
                       )}
                     </td>
                     <td>
+                      {evaluaciones[d.id]?.resultado ? (
+                        <div className="document-result">
+                          {evaluaciones[d.id].resultado.puntaje_total != null ? (
+                            <strong>
+                              {formatPuntaje(
+                                evaluaciones[d.id].resultado.puntaje_total
+                              )}{" "}
+                              /{" "}
+                              {formatPuntaje(
+                                puntajeMaximo(
+                                  evaluaciones[d.id].resultado.criterios
+                                )
+                              )}{" "}
+                              pts
+                            </strong>
+                          ) : (
+                            <strong>Informe guardado</strong>
+                          )}
+                          <span className="muted">
+                            {formatFecha(evaluaciones[d.id].creado_en)}
+                          </span>
+                          <button
+                            className="link-btn report-link"
+                            onClick={() => setPreevaluando(d)}
+                          >
+                            Ver informe
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="muted">Sin evaluación</span>
+                      )}
+                    </td>
+                    <td>
                       <div className="row-actions">
                         {PREVIEW_EXT.includes(extension(d.ruta_archivo)) && (
                           <button
@@ -876,7 +978,11 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
                           <button
                             className="icon-btn"
                             onClick={() => setPreevaluando(d)}
-                            title="Preevaluar con IA"
+                            title={
+                              evaluaciones[d.id]
+                                ? "Ver informe y evaluar de nuevo"
+                                : "Evaluar con IA"
+                            }
                           >
                             <Icon name="spark" size={16} />
                           </button>
@@ -914,8 +1020,219 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
             (i) => i.id === preevaluando.instrumento_id
           )}
           onClose={() => setPreevaluando(null)}
+          onEvaluated={refresh}
         />
       )}
+    </div>
+  );
+}
+
+function AdminLLMTab({ instrumentos }) {
+  const [estado, setEstado] = useState(null);
+  const [instrumentoId, setInstrumentoId] = useState(
+    instrumentos[0] ? String(instrumentos[0].id) : ""
+  );
+  const [prompt, setPrompt] = useState(null);
+  const [modelo, setModelo] = useState("qwen");
+  const [cargandoEstado, setCargandoEstado] = useState(true);
+  const [cargandoPrompt, setCargandoPrompt] = useState(false);
+  const [probando, setProbando] = useState(false);
+  const [error, setError] = useState("");
+  const [resultadoPrueba, setResultadoPrueba] = useState("");
+  const opcionesModelo = obtenerOpcionesModelo(estado?.modelos);
+
+  useEffect(() => {
+    if (!instrumentoId && instrumentos.length > 0) {
+      setInstrumentoId(String(instrumentos[0].id));
+    }
+  }, [instrumentoId, instrumentos]);
+
+  useEffect(() => {
+    let activo = true;
+    getIAEstado()
+      .then((data) => {
+        if (activo) setEstado(data);
+      })
+      .catch((err) => {
+        if (activo) {
+          setError(
+            err.response?.data?.detail ||
+              "No se pudo consultar la configuracion del servicio de IA."
+          );
+        }
+      })
+      .finally(() => {
+        if (activo) setCargandoEstado(false);
+      });
+    return () => {
+      activo = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!instrumentoId) {
+      setPrompt(null);
+      return undefined;
+    }
+    let activo = true;
+    setPrompt(null);
+    setCargandoPrompt(true);
+    getPromptPreview(instrumentoId)
+      .then((data) => {
+        if (activo) setPrompt(data);
+      })
+      .catch((err) => {
+        if (activo) {
+          setError(
+            err.response?.data?.detail ||
+              "No se pudo generar la vista previa del prompt."
+          );
+        }
+      })
+      .finally(() => {
+        if (activo) setCargandoPrompt(false);
+      });
+    return () => {
+      activo = false;
+    };
+  }, [instrumentoId]);
+
+  const ejecutarPrueba = async () => {
+    setProbando(true);
+    setError("");
+    setResultadoPrueba("");
+    try {
+      const resultado = await probarIA(modelo);
+      setResultadoPrueba(
+        `Conexion correcta con ${resultado.modelo}. Respuesta: ${resultado.respuesta}`
+      );
+    } catch (err) {
+      setError(
+        err.response?.data?.detail ||
+          "No se pudo conectar con el modelo. Revisa el endpoint y las credenciales del backend."
+      );
+    } finally {
+      setProbando(false);
+    }
+  };
+
+  const modeloSeleccionado = opcionesModelo.find(
+    (opcion) => opcion.value === modelo
+  )?.label;
+
+  return (
+    <div className="stack">
+      <section className="panel">
+        <h2>Administracion de modelos de lenguaje</h2>
+        <p className="muted">
+          La conexion usa las variables IA_API_URL e IA_API_KEY configuradas
+          en el backend. La credencial nunca se muestra en esta pantalla.
+        </p>
+        {cargandoEstado ? (
+          <p className="muted">Consultando estado...</p>
+        ) : (
+          <div className="llm-status">
+            <span
+              className={`llm-indicator ${
+                estado?.configurada ? "connected" : "disconnected"
+              }`}
+              aria-hidden="true"
+            />
+            <div>
+              <strong>
+                {estado?.configurada
+                  ? "Configuracion lista"
+                  : "Configuracion incompleta"}
+              </strong>
+              <p className="muted">
+                Endpoint:{" "}
+                {estado?.endpoint_configurado ? "configurado" : "faltante"} ·
+                Credencial:{" "}
+                {estado?.credencial_configurada ? "configurada" : "faltante"}
+              </p>
+            </div>
+          </div>
+        )}
+
+        <div className="llm-test-controls">
+          <label className="form-row">
+            <span>Modelo para la prueba</span>
+            <select value={modelo} onChange={(e) => setModelo(e.target.value)}>
+              {opcionesModelo.map((opcion) => (
+                <option key={opcion.value} value={opcion.value}>
+                  {opcion.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {modeloSeleccionado && (
+            <span className="tag">{modeloSeleccionado}</span>
+          )}
+          <button
+            className="btn primary"
+            onClick={ejecutarPrueba}
+            disabled={probando || cargandoEstado || !estado?.configurada}
+          >
+            <Icon name="spark" size={16} />
+            {probando ? "Probando..." : "Probar conexion"}
+          </button>
+        </div>
+        {resultadoPrueba && (
+          <p className="success banner" role="status">
+            {resultadoPrueba}
+          </p>
+        )}
+        {error && <p className="error banner" role="alert">{error}</p>}
+      </section>
+
+      <section className="panel">
+        <h2>Prompt Builder de la pauta</h2>
+        <p className="muted">
+          El prompt se genera automaticamente con los criterios y puntajes
+          maximos que escribiste en cada instrumento. La misma construccion se
+          utiliza al preevaluar un documento, criterio por criterio.
+        </p>
+        <div className="form-row">
+          <label htmlFor="prompt-instrumento">Instrumento / pauta</label>
+          <select
+            id="prompt-instrumento"
+            value={instrumentoId}
+            onChange={(e) => setInstrumentoId(e.target.value)}
+          >
+            <option value="">Selecciona una pauta</option>
+            {instrumentos.map((instrumento) => (
+              <option key={instrumento.id} value={instrumento.id}>
+                {instrumento.nombre}
+              </option>
+            ))}
+          </select>
+        </div>
+        {instrumentos.length === 0 && (
+          <p className="empty">
+            Crea una pauta y escribe sus criterios para construir el prompt.
+          </p>
+        )}
+        {cargandoPrompt && <p className="muted">Construyendo prompt...</p>}
+        {prompt && !cargandoPrompt && (
+          <>
+            <p className="muted">
+              {prompt.instrumento} · {prompt.criterios} criterio(s)
+            </p>
+            {prompt.criterios === 0 ? (
+              <p className="empty">
+                Agrega criterios a esta pauta para poder evaluarla con IA.
+              </p>
+            ) : (
+              <div className="prompt-preview">
+                <h3>Instrucciones de evaluacion</h3>
+                <pre>{prompt.prompt.system}</pre>
+                <h3>Criterios y documento</h3>
+                <pre>{prompt.prompt.user}</pre>
+              </div>
+            )}
+          </>
+        )}
+      </section>
     </div>
   );
 }
@@ -1013,6 +1330,7 @@ function App() {
             query={query}
           />
         )}
+        {tab === "admin-llm" && <AdminLLMTab instrumentos={instrumentos} />}
         {tab === "actividad" && <ActividadTab query={query} />}
       </main>
     </div>

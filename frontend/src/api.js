@@ -54,6 +54,18 @@ export const preevaluarDocumento = (documentoId, modelo = "qwen") =>
 export const getPreevaluaciones = (documentoId) =>
   api.get(`/documentos/${documentoId}/preevaluaciones`).then((res) => res.data);
 
+export const getUltimasPreevaluaciones = () =>
+  api.get("/preevaluaciones/ultimas").then((res) => res.data);
+
+// ---- Admin LLM / constructor de prompts ----
+export const getIAEstado = () => api.get("/ia/estado").then((res) => res.data);
+
+export const probarIA = (modelo = "qwen") =>
+  api.post("/ia/probar", { modelo }).then((res) => res.data);
+
+export const getPromptPreview = (instrumentoId) =>
+  api.get(`/instrumentos/${instrumentoId}/prompt`).then((res) => res.data);
+
 // ---- Log de auditoria (M3 - trazabilidad) ----
 export const getLogs = (entidad) =>
   api

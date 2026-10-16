@@ -5,6 +5,7 @@ import uuid
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import ia_service, models, schemas
@@ -43,6 +44,22 @@ def health_check():
     return {"status": "ok"}
 
 
+@app.get("/api/ia/estado")
+def estado_ia():
+    return ia_service.estado_configuracion()
+
+
+@app.post("/api/ia/probar")
+def probar_ia(payload: schemas.PreevaluarRequest):
+    try:
+        resultado = ia_service.probar_conexion(payload.modelo)
+    except ia_service.IANoConfiguradaError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+    except ia_service.IAProveedorError as e:
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
+    return {"conectada": True, **resultado}
+
+
 # ---------------------------------------------------------------------------
 # Auditoria (log de cada cambio relevante - base de M3 trazabilidad)
 # ---------------------------------------------------------------------------
@@ -77,6 +94,20 @@ def list_logs(entidad: str | None = None, db: Session = Depends(get_db)):
 @app.get("/api/instrumentos", response_model=list[schemas.InstrumentoOut])
 def list_instrumentos(db: Session = Depends(get_db)):
     return db.query(models.Instrumento).order_by(models.Instrumento.id).all()
+
+
+@app.get("/api/instrumentos/{instrumento_id}/prompt")
+def previsualizar_prompt(instrumento_id: int, db: Session = Depends(get_db)):
+    instrumento = db.query(models.Instrumento).filter(
+        models.Instrumento.id == instrumento_id
+    ).first()
+    if instrumento is None:
+        raise HTTPException(status_code=404, detail="Instrumento no encontrado")
+    return {
+        "instrumento": instrumento.nombre,
+        "criterios": len(instrumento.criterios),
+        "prompt": ia_service.construir_prompt_preview(instrumento.criterios),
+    }
 
 
 @app.post("/api/instrumentos", response_model=schemas.InstrumentoOut, status_code=201)
@@ -276,10 +307,8 @@ def delete_documento(documento_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 # Preevaluacion asistida por IA (M2 - Qwen / Gemma)
 #
-# R1 deja la base lista; este bloque conecta con el modelo real apenas
-# lleguen las API keys de la universidad (variables IA_API_URL / IA_API_KEY,
-# ver backend/app/ia_service.py). Mientras tanto responde 503 con un mensaje
-# claro en vez de fallar sin explicacion.
+# La integracion usa las variables IA_API_URL / IA_API_KEY del entorno y
+# registra tambien los fallos de proveedor para mantener la trazabilidad.
 # ---------------------------------------------------------------------------
 
 @app.post(
@@ -300,11 +329,16 @@ def preevaluar_documento(
             status_code=400,
             detail="El documento debe estar asociado a un instrumento antes de preevaluarlo.",
         )
+    if not db_documento.instrumento.criterios:
+        raise HTTPException(
+            status_code=400,
+            detail="El instrumento asociado debe tener al menos un criterio para evaluarlo.",
+        )
 
     db_preevaluacion = models.Preevaluacion(
         documento_id=db_documento.id,
         instrumento_id=db_documento.instrumento_id,
-        modelo=payload.modelo,
+        modelo=ia_service.nombre_modelo_configurado(payload.modelo),
         estado=models.EstadoPreevaluacion.PENDIENTE,
     )
     db.add(db_preevaluacion)
@@ -338,6 +372,16 @@ def preevaluar_documento(
             f"Preevaluacion fallo: {e}",
         )
         raise HTTPException(status_code=422, detail=str(e))
+    except ia_service.IAProveedorError as e:
+        db_preevaluacion.estado = models.EstadoPreevaluacion.ERROR
+        db_preevaluacion.error = str(e)
+        db.commit()
+        db.refresh(db_preevaluacion)
+        registrar_log(
+            db, "documento", documento_id, models.AccionLog.PREEVALUAR,
+            f"Preevaluacion fallo: {e}",
+        )
+        raise HTTPException(status_code=e.status_code, detail=str(e)) from e
 
     db.commit()
     db.refresh(db_preevaluacion)
@@ -346,6 +390,27 @@ def preevaluar_documento(
         f"Preevaluacion generada con modelo '{payload.modelo}'",
     )
     return db_preevaluacion
+
+
+@app.get(
+    "/api/preevaluaciones/ultimas",
+    response_model=list[schemas.PreevaluacionOut],
+)
+def list_ultimas_preevaluaciones(db: Session = Depends(get_db)):
+    ultimas_por_documento = (
+        db.query(models.Preevaluacion.documento_id, func.max(models.Preevaluacion.id).label("id"))
+        .filter(
+            models.Preevaluacion.estado == models.EstadoPreevaluacion.COMPLETADA
+        )
+        .group_by(models.Preevaluacion.documento_id)
+        .subquery()
+    )
+    return (
+        db.query(models.Preevaluacion)
+        .join(ultimas_por_documento, models.Preevaluacion.id == ultimas_por_documento.c.id)
+        .order_by(models.Preevaluacion.id.desc())
+        .all()
+    )
 
 
 @app.get(

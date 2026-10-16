@@ -101,12 +101,7 @@ class Documento(Base):
 
 
 class Preevaluacion(Base):
-    """Preevaluacion asistida por IA de un documento contra un instrumento (R2).
-
-    R1 deja lista la base (documento + instrumento asociados) para que esto
-    se pueda disparar; el modelo real (Qwen/Gemma) se conecta via variables
-    de entorno en cuanto lleguen las API keys de la universidad.
-    """
+    """Preevaluacion asistida por IA de un documento contra un instrumento."""
 
     __tablename__ = "preevaluaciones"
 

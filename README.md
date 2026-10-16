@@ -86,6 +86,10 @@ de IA. `docs/sprints/sprint-01.md` tiene el objetivo y alcance del sprint.
 | DELETE | `/api/documentos/{id}` | Eliminar documento |
 | POST | `/api/documentos/{id}/preevaluar` | Generar preevaluacion IA (Qwen/Gemma) |
 | GET | `/api/documentos/{id}/preevaluaciones` | Historial de preevaluaciones del documento |
+| GET | `/api/preevaluaciones/ultimas` | Ultima evaluacion completada de cada documento |
+| GET | `/api/ia/estado` | Consultar el estado de configuracion (sin revelar la credencial) |
+| POST | `/api/ia/probar` | Probar una llamada real al modelo seleccionado |
+| GET | `/api/instrumentos/{id}/prompt` | Ver el prompt construido desde los criterios de una pauta |
 | GET | `/api/logs` | Log de auditoria (filtro opcional `?entidad=`) |
 
 Cada archivo cargado puede pesar hasta **50 MB**. La interfaz y la API validan
@@ -111,11 +115,23 @@ IA_MODEL_QWEN=<nombre exacto del modelo en ese endpoint>
 IA_MODEL_GEMMA=<nombre exacto del modelo en ese endpoint>
 ```
 
-**Mientras la universidad no entregue las API keys** (`nos iban a dar las
-api keys de la u`, aun pendiente), el endpoint responde `503` con un mensaje
-claro ("IA todavia no configurada") en vez de fallar sin explicacion, y el
-intento queda igual registrado en `/api/logs`. Copiar `.env.example` a `.env`
-y completarlo apenas lleguen las credenciales - no hace falta tocar codigo.
+El backend usa `Authorization: Bearer` y valida la respuesta antes de guardar
+una preevaluacion. Si faltan variables responde `503`; si el proveedor no
+responde o devuelve un error, la preevaluacion queda registrada como fallida
+y se informa el error sin exponer la credencial. Desde **Admin LLM** se puede
+consultar el estado, probar una conexion real y ver el prompt generado desde
+los criterios y puntajes maximos de una pauta. El texto de la pauta se manda
+como dato a evaluar y el resultado debe incluir todos sus criterios.
+
+Cada preevaluacion completada conserva su puntaje, resumen y justificacion por
+criterio en la base de datos. En la lista de documentos se muestra la ultima
+puntuacion y el boton **Ver informe** abre el desglose guardado; se puede
+consultar el historial completo desde esa misma ventana.
+
+Las credenciales se configuran en `.env` y se pasan al backend mediante
+Docker Compose. Si se modifica ese archivo con los contenedores ya iniciados,
+vuelve a ejecutar `docker compose up -d` para recrear el backend con los
+valores actuales; no incluyas ni compartas el contenido de `.env`.
 
 ## Como correr el proyecto
 
@@ -149,8 +165,8 @@ docker compose down -v
 
 - API keys de IA de parte de la universidad (Qwen/Gemma) - backend ya listo
   para recibirlas via `.env`, sin cambios de codigo.
-- UI de M2 (boton "Preevaluar con IA" y vista de resultados) y de M3 (vista
-  de logs) en el frontend - en desarrollo.
+- Vista de administracion de IA, prueba de conexion y constructor/preview del
+  prompt integrados en el frontend.
 - Autenticacion/roles de usuario (por ahora no hay login).
 - Definir con la contraparte politica de confidencialidad de los documentos
   cargados antes de enviarlos a un proveedor externo de IA.
