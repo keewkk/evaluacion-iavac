@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Node
+frontend/node_modules/
+frontend/build/
+
+# Uploads locales (no versionar archivos cargados por usuarios)
+uploads/*
+!uploads/.gitkeep
+
+# Entorno
+.env
