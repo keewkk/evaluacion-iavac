@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
+import logoUnab from "./logo-unab.png";
 import {
   getInstrumentos,
   createInstrumento,
@@ -141,7 +142,7 @@ function Logo() {
         <span className="logo-mark">U</span>
         <span className="logo-text">
           <strong>Universidad</strong>
-          <small>Andres Bello</small>
+          <small>Andrés Bello</small>
         </span>
       </div>
     );
@@ -149,8 +150,8 @@ function Logo() {
   return (
     <img
       className="logo-img"
-      src="/logo-unab.png"
-      alt="Universidad Andres Bello"
+      src={logoUnab}
+      alt="Universidad Andrés Bello"
       onError={() => setFailed(true)}
     />
   );
