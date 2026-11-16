@@ -21,7 +21,6 @@ import {
   getPromptPreview,
   getCarpetas,
   createCarpeta,
-  updateCarpeta,
   deleteCarpeta,
   analizarCarpeta,
   carpetaInformeUrl,
@@ -771,12 +770,13 @@ function CarpetasTab({ carpetas, documentos, refresh, query }) {
   const [bannerMsg, setBannerMsg] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
 
+  const carpetaActivaId = carpetaActiva?.id;
   useEffect(() => {
-    if (carpetaActiva) {
-      const encontrada = carpetas.find((c) => c.id === carpetaActiva.id);
+    if (carpetaActivaId) {
+      const encontrada = carpetas.find((c) => c.id === carpetaActivaId);
       if (encontrada) setCarpetaActiva(encontrada);
     }
-  }, [carpetas]);
+  }, [carpetas, carpetaActivaId]);
 
   const handleCrear = async (e) => {
     e.preventDefault();
