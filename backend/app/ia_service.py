@@ -85,7 +85,50 @@ def extraer_texto(ruta_archivo: str, max_chars: int = 12000) -> DocumentoTexto:
                 "Falta la libreria python-docx para leer Word."
             ) from e
         doc = docx.Document(ruta_archivo)
-        texto = "\n".join(p.text for p in doc.paragraphs)
+        partes = [p.text for p in doc.paragraphs if p.text.strip()]
+        for t in doc.tables:
+            for row in t.rows:
+                row_text = " | ".join(c.text.strip() for c in row.cells if c.text.strip())
+                if row_text:
+                    partes.append(row_text)
+        texto = "\n".join(partes)
+    elif ext in (".xlsx", ".xls"):
+        try:
+            import openpyxl
+        except ImportError as e:
+            raise ExtraccionTextoError(
+                "Falta la libreria openpyxl para leer planillas Excel."
+            ) from e
+        try:
+            wb = openpyxl.load_workbook(ruta_archivo, data_only=True)
+            filas_texto = []
+            for sheetname in wb.sheetnames:
+                ws = wb[sheetname]
+                filas_texto.append(f"[Hoja: {sheetname}]")
+                for row in list(ws.iter_rows(values_only=True))[:100]:
+                    celdas = [str(c).strip() for c in row if c is not None and str(c).strip()]
+                    if celdas:
+                        filas_texto.append(" | ".join(celdas))
+            texto = "\n".join(filas_texto)
+        except Exception as e:
+            raise ExtraccionTextoError(f"Error al leer planilla Excel: {e}") from e
+    elif ext in (".pptx", ".ppt"):
+        try:
+            from pptx import Presentation
+        except ImportError as e:
+            raise ExtraccionTextoError(
+                "Falta la libreria python-pptx para leer presentaciones PowerPoint."
+            ) from e
+        try:
+            prs = Presentation(ruta_archivo)
+            diapositivas = []
+            for i, slide in enumerate(prs.slides):
+                textos = [s.text.strip() for s in slide.shapes if hasattr(s, "text") and s.text.strip()]
+                if textos:
+                    diapositivas.append(f"[Diapositiva {i+1}]\n" + "\n".join(textos))
+            texto = "\n\n".join(diapositivas)
+        except Exception as e:
+            raise ExtraccionTextoError(f"Error al leer presentacion PowerPoint: {e}") from e
     else:
         raise ExtraccionTextoError(
             f"Tipo de archivo '{ext}' todavia no soportado para preevaluacion automatica."

@@ -20,15 +20,26 @@ CREATE TABLE IF NOT EXISTS criterios (
     FOREIGN KEY (instrumento_id) REFERENCES instrumentos(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS carpetas (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    nombre VARCHAR(255) NOT NULL,
+    descripcion TEXT,
+    ultimo_informe VARCHAR(500) NULL,
+    analizado_en TIMESTAMP NULL,
+    creado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS documentos (
     id INT AUTO_INCREMENT PRIMARY KEY,
     nombre VARCHAR(255) NOT NULL,
     tipo VARCHAR(100),
     ruta_archivo VARCHAR(500) NOT NULL,
     instrumento_id INT NULL,
+    carpeta_id INT NULL,
     estado ENUM('CARGADO', 'ASOCIADO') NOT NULL DEFAULT 'CARGADO',
     cargado_en TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (instrumento_id) REFERENCES instrumentos(id) ON DELETE SET NULL
+    FOREIGN KEY (instrumento_id) REFERENCES instrumentos(id) ON DELETE SET NULL,
+    FOREIGN KEY (carpeta_id) REFERENCES carpetas(id) ON DELETE SET NULL
 );
 
 -- Modulo R2 - Preevaluacion asistida por IA (Qwen / Gemma)

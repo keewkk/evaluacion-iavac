@@ -22,6 +22,7 @@ class AccionLog(str, Enum):
     CARGAR = "CARGAR"
     ASOCIAR = "ASOCIAR"
     PREEVALUAR = "PREEVALUAR"
+    ANALIZAR = "ANALIZAR"
 
 
 class EstadoPreevaluacion(str, Enum):
@@ -74,9 +75,23 @@ class InstrumentoOut(InstrumentoBase):
     criterios: list[CriterioOut] = []
 
 
-# ---- Documento ----
+# ---- Carpeta ----
 
-class DocumentoOut(BaseModel):
+class CarpetaBase(BaseModel):
+    nombre: str
+    descripcion: str | None = None
+
+
+class CarpetaCreate(CarpetaBase):
+    pass
+
+
+class CarpetaUpdate(BaseModel):
+    nombre: str | None = None
+    descripcion: str | None = None
+
+
+class DocumentoEnCarpeta(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     nombre: str
@@ -87,8 +102,49 @@ class DocumentoOut(BaseModel):
     cargado_en: datetime | None = None
 
 
+class CarpetaOut(CarpetaBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ultimo_informe: str | None = None
+    analizado_en: datetime | None = None
+    creado_en: datetime | None = None
+    documentos_count: int = 0
+    documentos: list[DocumentoEnCarpeta] = []
+
+
+class AnalisisCarpetaOut(BaseModel):
+    carpeta_id: int
+    carpeta_nombre: str
+    total_documentos: int
+    informe_disponible: bool = True
+    descargar_url: str
+    resumen_ejecutivo: str
+    ejes_tematicos: list[dict] = []
+    hallazgos_clave: list[str] = []
+    alertas_discrepancias: list[str] = []
+    recomendaciones: list[dict] = []
+
+
+# ---- Documento ----
+
+class DocumentoOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    nombre: str
+    tipo: str | None = None
+    ruta_archivo: str
+    instrumento_id: int | None = None
+    carpeta_id: int | None = None
+    estado: EstadoDocumento
+    cargado_en: datetime | None = None
+
+
 class DocumentoAsociar(BaseModel):
     instrumento_id: int
+
+
+class DocumentoAsociarCarpeta(BaseModel):
+    carpeta_id: int | None = None
 
 
 # ---- Preevaluacion (M2 - IA) ----

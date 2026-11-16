@@ -33,6 +33,7 @@ class AccionLog(str, enum.Enum):
     CARGAR = "CARGAR"
     ASOCIAR = "ASOCIAR"
     PREEVALUAR = "PREEVALUAR"
+    ANALIZAR = "ANALIZAR"
 
 
 class EstadoPreevaluacion(str, enum.Enum):
@@ -77,6 +78,25 @@ class Criterio(Base):
     instrumento = relationship("Instrumento", back_populates="criterios")
 
 
+class Carpeta(Base):
+    """Carpeta para agrupacion de documentos y analisis masivo con generacion de informes Word."""
+
+    __tablename__ = "carpetas"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(255), nullable=False)
+    descripcion = Column(Text, nullable=True)
+    ultimo_informe = Column(String(500), nullable=True)
+    analizado_en = Column(TIMESTAMP, nullable=True)
+    creado_en = Column(TIMESTAMP, server_default=func.now())
+
+    documentos = relationship("Documento", back_populates="carpeta")
+
+    @property
+    def documentos_count(self) -> int:
+        return len(self.documentos) if self.documentos else 0
+
+
 class Documento(Base):
     """Documento evaluable cargado al sistema (aun sin evaluar - eso es R2)."""
 
@@ -89,12 +109,16 @@ class Documento(Base):
     instrumento_id = Column(
         Integer, ForeignKey("instrumentos.id", ondelete="SET NULL"), nullable=True
     )
+    carpeta_id = Column(
+        Integer, ForeignKey("carpetas.id", ondelete="SET NULL"), nullable=True
+    )
     estado = Column(
         Enum(EstadoDocumento), nullable=False, default=EstadoDocumento.CARGADO
     )
     cargado_en = Column(TIMESTAMP, server_default=func.now())
 
     instrumento = relationship("Instrumento", back_populates="documentos")
+    carpeta = relationship("Carpeta", back_populates="documentos")
     preevaluaciones = relationship(
         "Preevaluacion", back_populates="documento", cascade="all, delete-orphan"
     )

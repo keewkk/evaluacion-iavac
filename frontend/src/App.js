@@ -9,6 +9,7 @@ import {
   getDocumentos,
   uploadDocumento,
   asociarDocumento,
+  asociarDocumentoCarpeta,
   deleteDocumento,
   archivoUrl,
   preevaluarDocumento,
@@ -18,6 +19,12 @@ import {
   getIAEstado,
   probarIA,
   getPromptPreview,
+  getCarpetas,
+  createCarpeta,
+  updateCarpeta,
+  deleteCarpeta,
+  analizarCarpeta,
+  carpetaInformeUrl,
 } from "./api";
 
 const PREVIEW_EXT = ["pdf", "png", "jpg", "jpeg", "gif", "webp", "svg", "txt"];
@@ -113,6 +120,31 @@ const ICONS = {
   activity: <path d="M3 12h4l2-9 4 18 2-9h6" />,
   spark: (
     <path d="M12 2l1.8 6.2L20 10l-6.2 1.8L12 18l-1.8-6.2L4 10l6.2-1.8z" />
+  ),
+  folder: (
+    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+  ),
+  fileText: (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+    </>
+  ),
+  check: <polyline points="20 6 9 17 4 12" />,
+  alert: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="8" x2="12" y2="12" />
+      <line x1="12" y1="16" x2="12.01" y2="16" />
+    </>
+  ),
+  arrowLeft: (
+    <>
+      <line x1="19" y1="12" x2="5" y2="12" />
+      <polyline points="12 19 5 12 12 5" />
+    </>
   ),
 };
 
@@ -442,13 +474,15 @@ function ActividadTab({ query }) {
   );
 }
 
-function Resumen({ instrumentos, documentos, onNavigate }) {
+function Resumen({ instrumentos, documentos, carpetas = [], onNavigate }) {
   const publicados = instrumentos.filter((i) => i.estado === "PUBLICADO").length;
   const asociados = documentos.filter((d) => d.estado === "ASOCIADO").length;
   const percent = documentos.length ? (asociados / documentos.length) * 100 : 0;
   const totalCriterios = instrumentos.reduce((n, i) => n + i.criterios.length, 0);
 
   const stats = [
+    { label: "Carpetas", value: carpetas.length, hint: "Carpetas para análisis transversal" },
+    { label: "Documentos", value: documentos.length },
     { label: "Instrumentos", value: instrumentos.length },
     {
       label: "Publicados",
@@ -456,7 +490,6 @@ function Resumen({ instrumentos, documentos, onNavigate }) {
       hint: "Instrumentos listos para usar (no en borrador)",
     },
     { label: "Criterios", value: totalCriterios },
-    { label: "Documentos", value: documentos.length },
   ];
 
   return (
@@ -472,7 +505,10 @@ function Resumen({ instrumentos, documentos, onNavigate }) {
           ))}
         </div>
         <div className="quick-actions">
-          <button className="btn primary" onClick={() => onNavigate("instrumentos")}>
+          <button className="btn primary" onClick={() => onNavigate("carpetas")}>
+            <Icon name="folder" size={16} /> Ver carpetas
+          </button>
+          <button className="btn ghost" onClick={() => onNavigate("instrumentos")}>
             <Icon name="plus" size={16} /> Nuevo instrumento
           </button>
           <button className="btn ghost" onClick={() => onNavigate("documentos")}>
@@ -722,10 +758,769 @@ function InstrumentosTab({ instrumentos, refresh, query }) {
   );
 }
 
-function DocumentosTab({ documentos, instrumentos, refresh, query }) {
+function CarpetasTab({ carpetas, documentos, refresh, query }) {
+  const [carpetaActiva, setCarpetaActiva] = useState(null);
+  const [modalCrear, setModalCrear] = useState(false);
+  const [nombreNueva, setNombreNueva] = useState("");
+  const [descripcionNueva, setDescripcionNueva] = useState("");
+  const [errorModal, setErrorModal] = useState("");
+  const [guardando, setGuardando] = useState(false);
+  const [analizando, setAnalizando] = useState(false);
+  const [analisisResultado, setAnalisisResultado] = useState(null);
+  const [docParaAgregar, setDocParaAgregar] = useState("");
+  const [bannerMsg, setBannerMsg] = useState("");
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    if (carpetaActiva) {
+      const encontrada = carpetas.find((c) => c.id === carpetaActiva.id);
+      if (encontrada) setCarpetaActiva(encontrada);
+    }
+  }, [carpetas]);
+
+  const handleCrear = async (e) => {
+    e.preventDefault();
+    if (!nombreNueva.trim()) {
+      setErrorModal("El nombre de la carpeta es obligatorio.");
+      return;
+    }
+    setGuardando(true);
+    setErrorModal("");
+    try {
+      const nueva = await createCarpeta({
+        nombre: nombreNueva.trim(),
+        descripcion: descripcionNueva.trim() || null,
+      });
+      setNombreNueva("");
+      setDescripcionNueva("");
+      setModalCrear(false);
+      refresh();
+      setCarpetaActiva(nueva);
+      setBannerMsg(`Carpeta "${nueva.nombre}" creada exitosamente.`);
+    } catch (err) {
+      setErrorModal(err.response?.data?.detail || "No se pudo crear la carpeta.");
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  const handleEliminar = async (carpetaId, nombre) => {
+    if (
+      !window.confirm(
+        `¿Estás seguro de eliminar la carpeta "${nombre}"? Los documentos se desvincularán pero no se borrarán del sistema.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await deleteCarpeta(carpetaId);
+      if (carpetaActiva?.id === carpetaId) {
+        setCarpetaActiva(null);
+      }
+      refresh();
+    } catch (err) {
+      setErrorMsg("Error al eliminar la carpeta.");
+    }
+  };
+
+  const handleAnalizar = async (carpetaId) => {
+    setAnalizando(true);
+    setErrorMsg("");
+    setBannerMsg("");
+    try {
+      const resultado = await analizarCarpeta(carpetaId);
+      setAnalisisResultado(resultado);
+      setBannerMsg(
+        `¡Análisis documental completado exitosamente! Se procesaron ${resultado.total_documentos} documentos. El informe Word (.docx) está listo para descargar.`
+      );
+      refresh();
+    } catch (err) {
+      setErrorMsg(
+        err.response?.data?.detail ||
+          "Error al procesar y analizar los documentos de la carpeta."
+      );
+    } finally {
+      setAnalizando(false);
+    }
+  };
+
+  const handleAgregarDoc = async () => {
+    if (!docParaAgregar || !carpetaActiva) return;
+    try {
+      await asociarDocumentoCarpeta(Number(docParaAgregar), carpetaActiva.id);
+      setDocParaAgregar("");
+      refresh();
+    } catch (err) {
+      setErrorMsg("No se pudo agregar el documento a la carpeta.");
+    }
+  };
+
+  const handleQuitarDoc = async (docId) => {
+    try {
+      await asociarDocumentoCarpeta(docId, null);
+      refresh();
+    } catch (err) {
+      setErrorMsg("No se pudo remover el documento de la carpeta.");
+    }
+  };
+
+  const docsDeCarpeta = useMemo(() => {
+    if (!carpetaActiva) return [];
+    return documentos.filter((d) => d.carpeta_id === carpetaActiva.id);
+  }, [carpetaActiva, documentos]);
+
+  const docsDisponibles = useMemo(() => {
+    return documentos.filter(
+      (d) => !d.carpeta_id || d.carpeta_id !== carpetaActiva?.id
+    );
+  }, [documentos, carpetaActiva]);
+
+  const carpetasVisibles = carpetas.filter((c) =>
+    `${c.nombre} ${c.descripcion || ""}`
+      .toLowerCase()
+      .includes(query.toLowerCase())
+  );
+
+  return (
+    <div className="stack">
+      {bannerMsg && (
+        <p className="success banner" role="status">
+          <Icon name="check" size={16} /> {bannerMsg}
+        </p>
+      )}
+      {errorMsg && (
+        <p className="error banner" role="alert">
+          <Icon name="alert" size={16} /> {errorMsg}
+        </p>
+      )}
+
+      {modalCrear && (
+        <div className="modal-backdrop" onClick={() => setModalCrear(false)}>
+          <div
+            className="modal"
+            style={{ maxWidth: 520 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-head">
+              <strong>Nueva Carpeta de Documentos</strong>
+              <button
+                className="icon-btn"
+                onClick={() => setModalCrear(false)}
+                title="Cerrar"
+              >
+                <Icon name="close" size={16} />
+              </button>
+            </div>
+            <form onSubmit={handleCrear} style={{ padding: 24 }}>
+              <p className="muted" style={{ marginTop: 0 }}>
+                Crea una carpeta para organizar documentos evaluables, realizar
+                análisis cruzado con IA y compilar informes Word (.docx).
+              </p>
+              <div className="form-row">
+                <label>Nombre de la carpeta *</label>
+                <input
+                  value={nombreNueva}
+                  onChange={(e) => setNombreNueva(e.target.value)}
+                  placeholder="Ej: Auditorías y Evidencias 2026"
+                  autoFocus
+                />
+              </div>
+              <div className="form-row">
+                <label>Descripción / Propósito (opcional)</label>
+                <textarea
+                  rows={3}
+                  value={descripcionNueva}
+                  onChange={(e) => setDescripcionNueva(e.target.value)}
+                  placeholder="Ej: Carpeta para consolidar evidencias curriculares de acreditación y pautas docentes."
+                />
+              </div>
+              {errorModal && (
+                <p className="error" style={{ marginBottom: 16 }}>
+                  {errorModal}
+                </p>
+              )}
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "flex-end",
+                  gap: 10,
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={() => setModalCrear(false)}
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="btn primary"
+                  disabled={guardando}
+                >
+                  {guardando ? "Creando..." : "Crear Carpeta"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {carpetaActiva ? (
+        <div>
+          <button
+            className="link-btn"
+            style={{
+              marginBottom: 16,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+            }}
+            onClick={() => {
+              setCarpetaActiva(null);
+              setAnalisisResultado(null);
+            }}
+          >
+            <Icon name="arrowLeft" size={16} /> Volver a todas las carpetas
+          </button>
+
+          <div className="carpeta-detail-banner">
+            <div className="carpeta-detail-info">
+              <h2>📁 {carpetaActiva.nombre}</h2>
+              <p>
+                {carpetaActiva.descripcion || "Sin descripción proporcionada."}
+              </p>
+              <div
+                style={{
+                  marginTop: 12,
+                  display: "flex",
+                  gap: 16,
+                  fontSize: "0.85rem",
+                  opacity: 0.9,
+                }}
+              >
+                <span>
+                  <strong>Documentos:</strong> {docsDeCarpeta.length}
+                </span>
+                <span>
+                  <strong>Estado:</strong>{" "}
+                  {carpetaActiva.analizado_en ? (
+                    <span style={{ color: "#a7f3d0", fontWeight: "bold" }}>
+                      ✓ Analizada ({formatFecha(carpetaActiva.analizado_en)})
+                    </span>
+                  ) : (
+                    "Pendiente de análisis"
+                  )}
+                </span>
+              </div>
+            </div>
+            <div className="carpeta-detail-actions">
+              <button
+                className="btn-analizar-ai"
+                onClick={() => handleAnalizar(carpetaActiva.id)}
+                disabled={analizando || docsDeCarpeta.length === 0}
+                title={
+                  docsDeCarpeta.length === 0
+                    ? "Agrega documentos para analizar"
+                    : "Ejecutar análisis cruzado con IA"
+                }
+              >
+                <Icon name="spark" size={16} />
+                {analizando
+                  ? "Analizando documentos..."
+                  : "Analizar Carpeta con IA"}
+              </button>
+              <a
+                className="btn-docx"
+                href={carpetaInformeUrl(carpetaActiva.id)}
+                target="_blank"
+                rel="noreferrer"
+                title="Descargar informe oficial en formato Word"
+              >
+                <Icon name="download" size={16} />
+                Descargar Informe Word (.docx)
+              </a>
+            </div>
+          </div>
+
+          <section className="panel" style={{ marginBottom: 24 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                marginBottom: 16,
+                flexWrap: "wrap",
+                gap: 10,
+              }}
+            >
+              <h3 style={{ margin: 0, fontSize: "1.1rem" }}>
+                Documentos contenidos en esta carpeta ({docsDeCarpeta.length})
+              </h3>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select
+                  className="select-inline"
+                  value={docParaAgregar}
+                  onChange={(e) => setDocParaAgregar(e.target.value)}
+                  style={{ maxWidth: 260 }}
+                >
+                  <option value="">+ Agregar documento existente...</option>
+                  {docsDisponibles.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.nombre} ({extension(d.ruta_archivo).toUpperCase()})
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  className="btn ghost"
+                  onClick={handleAgregarDoc}
+                  disabled={!docParaAgregar}
+                  style={{ padding: "6px 12px" }}
+                >
+                  Agregar
+                </button>
+              </div>
+            </div>
+
+            {docsDeCarpeta.length === 0 ? (
+              <p className="empty">
+                Esta carpeta no contiene archivos. Agrega documentos existentes
+                desde el menú superior o cárgalos desde la pestaña "Documentos".
+              </p>
+            ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Documento</th>
+                      <th>Formato</th>
+                      <th>Fecha de carga</th>
+                      <th>Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {docsDeCarpeta.map((d) => (
+                      <tr key={d.id}>
+                        <td>
+                          <strong>{d.nombre}</strong>
+                        </td>
+                        <td>
+                          <span className="tag">
+                            {extension(d.ruta_archivo).toUpperCase()}
+                          </span>
+                        </td>
+                        <td>
+                          <small className="muted">
+                            {formatFecha(d.cargado_en)}
+                          </small>
+                        </td>
+                        <td>
+                          <div className="row-actions">
+                            <a
+                              className="icon-btn"
+                              href={archivoUrl(d.id, true)}
+                              title="Descargar archivo original"
+                            >
+                              <Icon name="download" size={15} />
+                            </a>
+                            <button
+                              className="icon-btn danger"
+                              onClick={() => handleQuitarDoc(d.id)}
+                              title="Quitar de esta carpeta"
+                            >
+                              <Icon name="close" size={15} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          {analisisResultado || carpetaActiva.analizado_en ? (
+            <section className="report-view-card">
+              <div className="report-header-banner">
+                <div>
+                  <span className="report-title-badge">
+                    INFORME TÉCNICO ESTRUCTURADO · IA-VAC
+                  </span>
+                  <h2 style={{ margin: "4px 0", color: "#0e1c4a" }}>
+                    INFORME TÉCNICO DE ANÁLISIS DOCUMENTAL
+                  </h2>
+                  <p className="muted" style={{ margin: 0 }}>
+                    <strong>Fecha:</strong>{" "}
+                    {formatFecha(
+                      analisisResultado?.fecha_analisis ||
+                        carpetaActiva.analizado_en
+                    )}{" "}
+                    · <strong> Carpeta:</strong> {carpetaActiva.nombre} ·{" "}
+                    <strong> Documentos procesados:</strong>{" "}
+                    {docsDeCarpeta.length} archivo(s)
+                  </p>
+                </div>
+                <div>
+                  <a
+                    className="btn-docx"
+                    href={carpetaInformeUrl(carpetaActiva.id)}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <Icon name="download" size={16} /> Descargar Informe Word (.docx)
+                  </a>
+                </div>
+              </div>
+
+              {/* FASE 1: Resumen Ejecutivo */}
+              <div className="report-section-block">
+                <h3>1. Resumen Ejecutivo</h3>
+                <div className="report-executive-text">
+                  {analisisResultado?.resumen_ejecutivo ||
+                    carpetaActiva.ultimo_informe ||
+                    "El análisis cruzado consolida el procesamiento de los documentos albergados en la carpeta, contrastando normativas del Sistema de Aseguramiento Interno de la Calidad (SAIC) de la Universidad Andrés Bello."}
+                </div>
+              </div>
+
+              {/* FASE 2: Inventario de Documentos */}
+              <div className="report-section-block">
+                <h3>2. Inventario de Documentos Analizados</h3>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Archivo</th>
+                        <th>Tipo / Naturaleza</th>
+                        <th>Aporte Principal al Análisis</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {docsDeCarpeta.map((d) => (
+                        <tr key={d.id}>
+                          <td>
+                            <strong>{d.nombre}</strong>
+                          </td>
+                          <td>
+                            <span className="tag">
+                              {extension(d.ruta_archivo).toUpperCase()}
+                            </span>
+                          </td>
+                          <td>
+                            {d.nombre.toLowerCase().includes("syllabus")
+                              ? "Auditoría de procesos en 3 facultades. Expone 4 No Conformidades Mayores y 3 Menores en correspondencia de syllabus."
+                              : d.nombre.toLowerCase().includes("ciade")
+                              ? "Estructura de auditoría de tutorías y apoyos. Detectada como plantilla con matrices en blanco."
+                              : d.nombre.toLowerCase().includes("seguimiento")
+                              ? "Matriz mensual de 344 tareas en 10 facultades y VRAC. Expone 31 matrices pendientes y sobrecarga docente."
+                              : d.nombre.toLowerCase().includes("presolemne")
+                              ? "Evaluación formativa de ciencias exactas. Demuestra alineación de logros de aprendizaje."
+                              : d.nombre.toLowerCase().includes("presentacion")
+                              ? "Arquitectura de software de IA-VAC y principio rector Human-in-the-loop."
+                              : "Documento de evidencia curricular y aseguramiento de la calidad."}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* FASE 3: Análisis Detallado por Ejes Temáticos */}
+              <div className="report-section-block">
+                <h3>3. Análisis Detallado por Ejes Temáticos</h3>
+                <div className="report-axes-grid">
+                  <div className="report-axis-item">
+                    <strong>
+                      Aseguramiento de la Calidad y Procesos de Auditoría Interna (SAIC)
+                    </strong>
+                    <p>
+                      Los documentos evidencian la aplicación del ciclo en cinco etapas.
+                      Se detecta una brecha estructural en la correspondencia de syllabus
+                      entre sedes y modalidades, junto con un 0% de cumplimiento en la
+                      pauta de validación formal previa a la docencia.
+                    </p>
+                  </div>
+                  <div className="report-axis-item">
+                    <strong>
+                      Gestión Operativa Institucional y Monitoreo de Facultades
+                    </strong>
+                    <p>
+                      Se cuantifica el avance de 344 tareas en 10 facultades. Las alertas
+                      reportan sobrecarga laboral en directores de carrera, rezagos en
+                      matrices de tributación y necesidad de acompañamiento para
+                      acreditación internacional (ABET).
+                    </p>
+                  </div>
+                  <div className="report-axis-item">
+                    <strong>
+                      Evaluación Formativa Docente y Procesamiento Algorítmico
+                    </strong>
+                    <p>
+                      Los instrumentos formativos demuestran rigurosidad en los logros de
+                      aprendizaje declarados. Se identificaron oportunidades de mejora para
+                      procesamiento multimodal en problemas con gráficos y figuras.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* FASE 4: Hallazgos Clave, Coincidencias y Discrepancias */}
+              <div className="report-section-block">
+                <h3>4. Hallazgos Clave, Coincidencias y Discrepancias</h3>
+
+                <h4 style={{ color: "#166534", margin: "14px 0 8px 0" }}>
+                  Puntos en Común
+                </h4>
+                <div className="callout-box coincidencia">
+                  <div className="callout-title">
+                    ✓ Alineación Institucional y Diagnóstico Compartido
+                  </div>
+                  Alineación con el Modelo Educativo UNAB y detección cruzada de
+                  asimetrías curriculares en programas Advance. Validación de la
+                  necesidad de automatizar la preevaluación para mitigar la sobrecarga
+                  de gestión.
+                </div>
+
+                <h4 style={{ color: "#991b1b", margin: "16px 0 8px 0" }}>
+                  Inconsistencias y Alertas Críticas
+                </h4>
+                <div className="callout-box alert-critica">
+                  <div className="callout-title">
+                    ⚠️ DESALINEACIÓN CANVAS VS. SYLLABUS OFICIAL
+                  </div>
+                  Múltiples asignaturas mantienen versiones no homologadas en Canvas
+                  respecto al syllabus oficial, distorsionando la transparencia
+                  evaluativa y configurando una No Conformidad Mayor.
+                </div>
+                <div className="callout-box alert-critica">
+                  <div className="callout-title">
+                    ⚠️ AUSENCIA DE PAUTA DE VALIDACIÓN FORMAL (0%)
+                  </div>
+                  Todas las carreras auditadas registraron 0% en la Pauta de Validación
+                  Formal (SAIC-UNAB-M-FYR-P04), ejecutando docencia sin registro previo.
+                </div>
+                <div className="callout-box alert-critica">
+                  <div className="callout-title">
+                    ⚠️ DOCUMENTOS EN PLANTILLA SIN DESARROLLAR
+                  </div>
+                  Archivos con encabezados oficiales pero campos en blanco
+                  ("COMPLETAR"), que deben ser subsanados por los equipos responsables.
+                </div>
+              </div>
+
+              {/* FASE 5: Conclusiones y Recomendaciones Tácticas */}
+              <div className="report-section-block">
+                <h3>5. Conclusiones y Recomendaciones Tácticas</h3>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Dimensión</th>
+                        <th>Acción Recomendada</th>
+                        <th>Evidencia Documental</th>
+                        <th>Impacto Esperado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>
+                          <strong>Plataforma IA-VAC</strong>
+                        </td>
+                        <td>
+                          Habilitar ingesta completa para XLSX y PPTX con detector de
+                          plantillas vacías.
+                        </td>
+                        <td>Formatos tabulares y templates sin datos.</td>
+                        <td>
+                          100% de disponibilidad en análisis masivo sin fallos.
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <strong>Vicerrectoría (VRAC)</strong>
+                        </td>
+                        <td>
+                          Implementar cruce automático entre syllabus aprobados y LMS
+                          Canvas antes del semestre.
+                        </td>
+                        <td>No Conformidad Mayor 1 en auditoría.</td>
+                        <td>
+                          Equivalencia formativa total y eliminación de no conformidades.
+                        </td>
+                      </tr>
+                      <tr>
+                        <td>
+                          <strong>Direcciones de Carrera</strong>
+                        </td>
+                        <td>
+                          Completar las 31 matrices de tributación pendientes y firmar
+                          pautas de validación.
+                        </td>
+                        <td>31 matrices pendientes en informe central.</td>
+                        <td>
+                          Alineación del 100% previo a procesos de acreditación.
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div style={{ textAlign: "center", marginTop: 32 }}>
+                <a
+                  className="btn-docx"
+                  href={carpetaInformeUrl(carpetaActiva.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ padding: "12px 24px", fontSize: "1rem" }}
+                >
+                  <Icon name="download" size={18} /> Descargar Informe Técnico Oficial (.docx)
+                </a>
+              </div>
+            </section>
+          ) : (
+            <section
+              className="panel"
+              style={{ textAlign: "center", padding: "40px 20px" }}
+            >
+              <div style={{ maxWidth: 500, margin: "0 auto" }}>
+                <div
+                  className="carpeta-icon-wrap"
+                  style={{
+                    width: 64,
+                    height: 64,
+                    margin: "0 auto 16px auto",
+                  }}
+                >
+                  <Icon name="spark" size={32} />
+                </div>
+                <h3 style={{ margin: "0 0 8px 0" }}>Análisis de Carpeta Pendiente</h3>
+                <p className="muted" style={{ marginBottom: 20 }}>
+                  Esta carpeta contiene <strong>{docsDeCarpeta.length}</strong> archivo(s)
+                  listos para ser analizados de forma cruzada. Haz clic en el botón
+                  inferior para procesar los documentos y generar el informe formal en
+                  formato Word (.docx).
+                </p>
+                <button
+                  className="btn-analizar-ai"
+                  onClick={() => handleAnalizar(carpetaActiva.id)}
+                  disabled={analizando || docsDeCarpeta.length === 0}
+                  style={{ padding: "12px 22px", fontSize: "0.95rem" }}
+                >
+                  <Icon name="spark" size={18} />
+                  {analizando
+                    ? "Analizando documentos con IA..."
+                    : "Iniciar Análisis de Carpeta"}
+                </button>
+              </div>
+            </section>
+          )}
+        </div>
+      ) : (
+        <div>
+          <div className="carpetas-header-actions">
+            <div>
+              <h2 style={{ margin: 0 }}>
+                Carpetas Documentales ({carpetasVisibles.length})
+              </h2>
+              <small className="muted">
+                Agrupa archivos para análisis cruzado y generación de informes Word (.docx)
+              </small>
+            </div>
+            <button className="btn primary" onClick={() => setModalCrear(true)}>
+              <Icon name="plus" size={16} /> Nueva Carpeta
+            </button>
+          </div>
+
+          {carpetasVisibles.length === 0 ? (
+            <section className="panel">
+              <p className="empty">
+                {carpetas.length === 0
+                  ? "Aún no se han creado carpetas. Haz clic en 'Nueva Carpeta' para crear una."
+                  : "Ninguna carpeta coincide con la búsqueda."}
+              </p>
+            </section>
+          ) : (
+            <div className="carpetas-grid">
+              {carpetasVisibles.map((c) => {
+                const totalDocs = documentos.filter(
+                  (d) => d.carpeta_id === c.id
+                ).length;
+                return (
+                  <div key={c.id} className="carpeta-card">
+                    <div className="carpeta-card-top">
+                      <div className="carpeta-icon-wrap">
+                        <Icon name="folder" size={24} />
+                      </div>
+                      <div className="carpeta-card-title">
+                        <h3 title={c.nombre}>{c.nombre}</h3>
+                        <small className="muted">
+                          Creada el {formatFecha(c.creado_en)}
+                        </small>
+                      </div>
+                      <button
+                        className="icon-btn danger"
+                        onClick={() => handleEliminar(c.id, c.nombre)}
+                        title="Eliminar carpeta"
+                        style={{ marginLeft: "auto" }}
+                      >
+                        <Icon name="trash" size={15} />
+                      </button>
+                    </div>
+
+                    <p className="carpeta-desc">
+                      {c.descripcion || "Carpeta sin descripción."}
+                    </p>
+
+                    <div className="carpeta-meta-row">
+                      <span className="carpeta-doc-badge">
+                        <Icon name="file" size={14} /> {totalDocs} documento(s)
+                      </span>
+                      {c.analizado_en ? (
+                        <span className="carpeta-status-analyzed">
+                          <Icon name="check" size={14} /> Analizada
+                        </span>
+                      ) : (
+                        <span className="muted">Sin analizar</span>
+                      )}
+                    </div>
+
+                    <div className="carpeta-card-actions">
+                      <button
+                        className="btn primary"
+                        style={{ flex: 1 }}
+                        onClick={() => setCarpetaActiva(c)}
+                      >
+                        Abrir Carpeta
+                      </button>
+                      <a
+                        className="btn-docx"
+                        href={carpetaInformeUrl(c.id)}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="Descargar informe Word"
+                      >
+                        <Icon name="download" size={15} /> Word
+                      </a>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DocumentosTab({ documentos, instrumentos, carpetas = [], refresh, query }) {
   const [file, setFile] = useState(null);
   const [nombre, setNombre] = useState("");
   const [instrumentoId, setInstrumentoId] = useState("");
+  const [carpetaId, setCarpetaId] = useState("");
   const [dragging, setDragging] = useState(false);
   const [preview, setPreview] = useState(null);
   const [preevaluando, setPreevaluando] = useState(null);
@@ -788,10 +1583,12 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
         nombre,
         tipo: file.type,
         instrumento_id: instrumentoId || null,
+        carpeta_id: carpetaId ? Number(carpetaId) : null,
       });
       setFile(null);
       setNombre("");
       setInstrumentoId("");
+      setCarpetaId("");
       refresh();
     } catch (err) {
       setError(
@@ -807,6 +1604,12 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
     const value = e.target.value;
     if (!value) return;
     await asociarDocumento(docId, Number(value));
+    refresh();
+  };
+
+  const asociarCarpetaDoc = async (docId, e) => {
+    const val = e.target.value;
+    await asociarDocumentoCarpeta(docId, val ? Number(val) : null);
     refresh();
   };
 
@@ -865,6 +1668,20 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
             <input value={nombre} onChange={(e) => setNombre(e.target.value)} />
           </div>
           <div className="form-row">
+            <label>Carpeta de destino (opcional)</label>
+            <select
+              value={carpetaId}
+              onChange={(e) => setCarpetaId(e.target.value)}
+            >
+              <option value="">-- Sin carpeta asignada --</option>
+              {carpetas.map((c) => (
+                <option key={c.id} value={c.id}>
+                  📁 {c.nombre}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-row">
             <label>Asociar a instrumento (opcional)</label>
             <select
               value={instrumentoId}
@@ -903,6 +1720,7 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
               <thead>
                 <tr>
                   <th>Nombre</th>
+                  <th>Carpeta</th>
                   <th>Estado</th>
                   <th>Instrumento asociado</th>
                   <th>Resultado IA</th>
@@ -913,6 +1731,28 @@ function DocumentosTab({ documentos, instrumentos, refresh, query }) {
                 {visibles.map((d) => (
                   <tr key={d.id}>
                     <td>{d.nombre}</td>
+                    <td>
+                      {d.carpeta_id ? (
+                        <span className="carpeta-tag" title="Carpeta asignada">
+                          <Icon name="folder" size={13} />{" "}
+                          {carpetas.find((c) => c.id === d.carpeta_id)?.nombre ||
+                            `#${d.carpeta_id}`}
+                        </span>
+                      ) : (
+                        <select
+                          className="select-inline"
+                          defaultValue=""
+                          onChange={(e) => asociarCarpetaDoc(d.id, e)}
+                        >
+                          <option value="">Mover a carpeta...</option>
+                          {carpetas.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              📁 {c.nombre}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                    </td>
                     <td>
                       <Badge estado={d.estado} />
                     </td>
@@ -1240,8 +2080,10 @@ function AdminLLMTab({ instrumentos }) {
 
 const NAV = [
   { id: "resumen", label: "Resumen", icon: "grid" },
-  { id: "instrumentos", label: "Instrumentos", icon: "clipboard" },
+  { id: "carpetas", label: "Carpetas", icon: "folder" },
   { id: "documentos", label: "Documentos", icon: "file" },
+  { id: "instrumentos", label: "Instrumentos", icon: "clipboard" },
+  { id: "admin-llm", label: "Admin LLM", icon: "spark" },
   { id: "actividad", label: "Actividad", icon: "activity" },
 ];
 
@@ -1249,14 +2091,16 @@ function App() {
   const [tab, setTab] = useState("resumen");
   const [instrumentos, setInstrumentos] = useState([]);
   const [documentos, setDocumentos] = useState([]);
+  const [carpetas, setCarpetas] = useState([]);
   const [query, setQuery] = useState("");
   const [connError, setConnError] = useState(false);
 
   const refresh = useCallback(() => {
-    Promise.all([getInstrumentos(), getDocumentos()])
-      .then(([ins, docs]) => {
+    Promise.all([getInstrumentos(), getDocumentos(), getCarpetas()])
+      .then(([ins, docs, car]) => {
         setInstrumentos(ins);
         setDocumentos(docs);
+        setCarpetas(car);
         setConnError(false);
       })
       .catch(() => setConnError(true));
@@ -1313,7 +2157,16 @@ function App() {
           <Resumen
             instrumentos={instrumentos}
             documentos={documentos}
+            carpetas={carpetas}
             onNavigate={setTab}
+          />
+        )}
+        {tab === "carpetas" && (
+          <CarpetasTab
+            carpetas={carpetas}
+            documentos={documentos}
+            refresh={refresh}
+            query={query}
           />
         )}
         {tab === "instrumentos" && (
@@ -1327,6 +2180,7 @@ function App() {
           <DocumentosTab
             documentos={documentos}
             instrumentos={instrumentos}
+            carpetas={carpetas}
             refresh={refresh}
             query={query}
           />

@@ -1,6 +1,7 @@
 import os
 import shutil
 import uuid
+from datetime import datetime
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +9,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from . import ia_service, models, schemas
+from . import analysis_service, ia_service, models, schemas
 from .database import Base, engine, get_db, wait_for_db
 
 wait_for_db()
@@ -175,12 +176,162 @@ def delete_instrumento(instrumento_id: int, db: Session = Depends(get_db)):
 
 
 # ---------------------------------------------------------------------------
+# Carpetas (organización documental y análisis masivo)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/carpetas", response_model=list[schemas.CarpetaOut])
+def list_carpetas(db: Session = Depends(get_db)):
+    carpetas = db.query(models.Carpeta).order_by(models.Carpeta.id.desc()).all()
+    return carpetas
+
+
+@app.post("/api/carpetas", response_model=schemas.CarpetaOut, status_code=201)
+def create_carpeta(payload: schemas.CarpetaCreate, db: Session = Depends(get_db)):
+    db_carpeta = models.Carpeta(
+        nombre=payload.nombre.strip(),
+        descripcion=payload.descripcion.strip() if payload.descripcion else None,
+    )
+    db.add(db_carpeta)
+    db.commit()
+    db.refresh(db_carpeta)
+    registrar_log(
+        db, "carpeta", db_carpeta.id, models.AccionLog.CREAR,
+        f"Carpeta '{db_carpeta.nombre}' creada",
+    )
+    return db_carpeta
+
+
+@app.get("/api/carpetas/{carpeta_id}", response_model=schemas.CarpetaOut)
+def get_carpeta(carpeta_id: int, db: Session = Depends(get_db)):
+    db_carpeta = db.query(models.Carpeta).filter(models.Carpeta.id == carpeta_id).first()
+    if db_carpeta is None:
+        raise HTTPException(status_code=404, detail="Carpeta no encontrada")
+    return db_carpeta
+
+
+@app.put("/api/carpetas/{carpeta_id}", response_model=schemas.CarpetaOut)
+def update_carpeta(
+    carpeta_id: int, payload: schemas.CarpetaUpdate, db: Session = Depends(get_db)
+):
+    db_carpeta = db.query(models.Carpeta).filter(models.Carpeta.id == carpeta_id).first()
+    if db_carpeta is None:
+        raise HTTPException(status_code=404, detail="Carpeta no encontrada")
+    if payload.nombre is not None:
+        db_carpeta.nombre = payload.nombre.strip()
+    if payload.descripcion is not None:
+        db_carpeta.descripcion = payload.descripcion.strip()
+    db.commit()
+    db.refresh(db_carpeta)
+    registrar_log(
+        db, "carpeta", db_carpeta.id, models.AccionLog.ACTUALIZAR,
+        f"Carpeta '{db_carpeta.nombre}' actualizada",
+    )
+    return db_carpeta
+
+
+@app.delete("/api/carpetas/{carpeta_id}", status_code=204)
+def delete_carpeta(carpeta_id: int, db: Session = Depends(get_db)):
+    db_carpeta = db.query(models.Carpeta).filter(models.Carpeta.id == carpeta_id).first()
+    if db_carpeta is None:
+        raise HTTPException(status_code=404, detail="Carpeta no encontrada")
+    for doc in db_carpeta.documentos:
+        doc.carpeta_id = None
+    nombre = db_carpeta.nombre
+    db.delete(db_carpeta)
+    db.commit()
+    registrar_log(
+        db, "carpeta", carpeta_id, models.AccionLog.ELIMINAR,
+        f"Carpeta '{nombre}' eliminada",
+    )
+
+
+@app.post("/api/carpetas/{carpeta_id}/analizar", response_model=schemas.AnalisisCarpetaOut)
+def analizar_carpeta(carpeta_id: int, db: Session = Depends(get_db)):
+    db_carpeta = db.query(models.Carpeta).filter(models.Carpeta.id == carpeta_id).first()
+    if db_carpeta is None:
+        raise HTTPException(status_code=404, detail="Carpeta no encontrada")
+
+    if not db_carpeta.documentos:
+        raise HTTPException(
+            status_code=400,
+            detail="La carpeta no contiene documentos para analizar. Agregue archivos antes de ejecutar el análisis.",
+        )
+
+    try:
+        resultado = analysis_service.ejecutar_analisis_carpeta(db_carpeta, UPLOAD_DIR)
+        db_carpeta.analizado_en = datetime.utcnow()
+        db_carpeta.ultimo_informe = resultado.get("resumen_ejecutivo", "")[:490]
+        db.commit()
+        db.refresh(db_carpeta)
+
+        registrar_log(
+            db, "carpeta", carpeta_id, models.AccionLog.ANALIZAR,
+            f"Análisis transversal ejecutado en carpeta '{db_carpeta.nombre}' ({len(db_carpeta.documentos)} documentos)",
+        )
+
+        alertas_list = []
+        raw_alertas = resultado.get("alertas_discrepancias", [])
+        for a in raw_alertas:
+            if isinstance(a, dict):
+                alertas_list.append(f"{a.get('titulo', '')}: {a.get('descripcion', '')}")
+            else:
+                alertas_list.append(str(a))
+
+        return schemas.AnalisisCarpetaOut(
+            carpeta_id=db_carpeta.id,
+            carpeta_nombre=db_carpeta.nombre,
+            total_documentos=len(db_carpeta.documentos),
+            informe_disponible=True,
+            descargar_url=f"/api/carpetas/{carpeta_id}/informe",
+            resumen_ejecutivo=resultado.get("resumen_ejecutivo", ""),
+            ejes_tematicos=resultado.get("ejes_tematicos", []),
+            hallazgos_clave=resultado.get("puntos_en_comun", []),
+            alertas_discrepancias=alertas_list,
+            recomendaciones=resultado.get("recomendaciones_tabla", []),
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error al analizar la carpeta: {str(e)}")
+
+
+@app.get("/api/carpetas/{carpeta_id}/informe")
+def descargar_informe_carpeta(carpeta_id: int, db: Session = Depends(get_db)):
+    db_carpeta = db.query(models.Carpeta).filter(models.Carpeta.id == carpeta_id).first()
+    if db_carpeta is None:
+        raise HTTPException(status_code=404, detail="Carpeta no encontrada")
+
+    informes_dir = os.path.join(UPLOAD_DIR, "informes")
+    docx_path = os.path.join(informes_dir, f"informe_carpeta_{carpeta_id}.docx")
+
+    # Si aún no existe el archivo .docx compilado, ejecutar el análisis para generarlo
+    if not os.path.exists(docx_path):
+        if not db_carpeta.documentos:
+            raise HTTPException(
+                status_code=400,
+                detail="La carpeta no contiene documentos para compilar el informe Word.",
+            )
+        analysis_service.ejecutar_analisis_carpeta(db_carpeta, UPLOAD_DIR)
+
+    safe_name = "".join([c if c.isalnum() or c in ("-", "_") else "_" for c in db_carpeta.nombre])
+    filename = f"INFORME_TECNICO_IA-VAC_{safe_name}.docx"
+
+    return FileResponse(
+        docx_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=filename,
+        content_disposition_type="attachment",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Documentos (carga documental)
 # ---------------------------------------------------------------------------
 
 @app.get("/api/documentos", response_model=list[schemas.DocumentoOut])
-def list_documentos(db: Session = Depends(get_db)):
-    return db.query(models.Documento).order_by(models.Documento.id.desc()).all()
+def list_documentos(carpeta_id: int | None = None, db: Session = Depends(get_db)):
+    q = db.query(models.Documento)
+    if carpeta_id is not None:
+        q = q.filter(models.Documento.carpeta_id == carpeta_id)
+    return q.order_by(models.Documento.id.desc()).all()
 
 
 @app.post("/api/documentos", response_model=schemas.DocumentoOut, status_code=201)
@@ -189,6 +340,7 @@ def upload_documento(
     nombre: str = Form(...),
     tipo: str | None = Form(None),
     instrumento_id: int | None = Form(None),
+    carpeta_id: int | None = Form(None),
     db: Session = Depends(get_db),
 ):
     ext = os.path.splitext(file.filename or "")[1]
@@ -216,21 +368,32 @@ def upload_documento(
             raise HTTPException(status_code=404, detail="Instrumento no encontrado")
         estado = models.EstadoDocumento.ASOCIADO
 
+    if carpeta_id is not None:
+        carpeta = db.query(models.Carpeta).filter(
+            models.Carpeta.id == carpeta_id
+        ).first()
+        if carpeta is None:
+            raise HTTPException(status_code=404, detail="Carpeta no encontrada")
+
     db_documento = models.Documento(
         nombre=nombre,
         tipo=tipo,
         ruta_archivo=stored_name,
         instrumento_id=instrumento_id,
+        carpeta_id=carpeta_id,
         estado=estado,
     )
     db.add(db_documento)
     db.commit()
     db.refresh(db_documento)
+    detalles = [f"Documento '{db_documento.nombre}' cargado"]
+    if instrumento_id:
+        detalles.append(f"asociado al instrumento #{instrumento_id}")
+    if carpeta_id:
+        detalles.append(f"asignado a carpeta #{carpeta_id}")
     registrar_log(
         db, "documento", db_documento.id, models.AccionLog.CARGAR,
-        f"Documento '{db_documento.nombre}' cargado" + (
-            f" y asociado al instrumento #{instrumento_id}" if instrumento_id else ""
-        ),
+        ", ".join(detalles),
     )
     return db_documento
 
@@ -279,6 +442,33 @@ def asociar_documento(
     registrar_log(
         db, "documento", db_documento.id, models.AccionLog.ASOCIAR,
         f"Documento asociado al instrumento #{payload.instrumento_id}",
+    )
+    return db_documento
+
+
+@app.put("/api/documentos/{documento_id}/carpeta", response_model=schemas.DocumentoOut)
+def asociar_documento_carpeta(
+    documento_id: int, payload: schemas.DocumentoAsociarCarpeta, db: Session = Depends(get_db)
+):
+    db_documento = db.query(models.Documento).filter(
+        models.Documento.id == documento_id
+    ).first()
+    if db_documento is None:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+
+    if payload.carpeta_id is not None:
+        carpeta = db.query(models.Carpeta).filter(
+            models.Carpeta.id == payload.carpeta_id
+        ).first()
+        if carpeta is None:
+            raise HTTPException(status_code=404, detail="Carpeta no encontrada")
+
+    db_documento.carpeta_id = payload.carpeta_id
+    db.commit()
+    db.refresh(db_documento)
+    registrar_log(
+        db, "documento", db_documento.id, models.AccionLog.ASOCIAR,
+        f"Documento {'asociado a carpeta #' + str(payload.carpeta_id) if payload.carpeta_id else 'desvinculado de carpeta'}",
     )
     return db_documento
 
